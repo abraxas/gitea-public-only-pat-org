@@ -13,6 +13,10 @@
   &nbsp;·&nbsp;
   <a href="https://github.com/abraxas/gitea-public-only-pat-org">gitea-public-only-pat-org</a>
 </p>
+<p align="center">
+  Write-up: <a href="https://abraxaslabs.tech/research/gitea-public-only-pat-org"><strong>https://abraxaslabs.tech/research/gitea-public-only-pat-org</strong></a>
+</p>
+
 
 # gitea-public-only-pat-org
 
